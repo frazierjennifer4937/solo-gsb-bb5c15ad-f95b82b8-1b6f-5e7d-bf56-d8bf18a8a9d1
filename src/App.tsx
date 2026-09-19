@@ -15,6 +15,8 @@ export default function App() {
     loadState() ?? { players: [], rounds: [] },
   );
   const [manual, setManual] = useState<DraftPair[]>([]);
+  // 下一轮工作区中勾选的本轮缺席选手（确认轮次时快照写入 Round.absentIds）
+  const [absentIds, setAbsentIds] = useState<string[]>([]);
 
   useEffect(() => {
     saveState(state);
@@ -41,6 +43,7 @@ export default function App() {
 
   const removePlayer = (id: string) => {
     setState((s) => ({ ...s, players: s.players.filter((p) => p.id !== id) }));
+    setAbsentIds((ids) => ids.filter((x) => x !== id));
   };
 
   /** 修改队伍（或清空）；队伍只属于选手资料，历史轮次按 id 记录，不受改队影响 */
@@ -74,6 +77,7 @@ export default function App() {
       return { ...s, rounds: s.rounds.slice(0, idx) };
     });
     setManual([]);
+    setAbsentIds([]);
   };
 
   const commitPlan = (plan: PairingPlan) => {
@@ -95,9 +99,11 @@ export default function App() {
     }
     setState((s) => ({
       ...s,
-      rounds: [...s.rounds, { id: uid('r'), matches }],
+      // 缺席名单随轮次快照保存，历史区据此展示；缺席不删除选手也不影响历史积分
+      rounds: [...s.rounds, { id: uid('r'), matches, absentIds: [...absentIds] }],
     }));
     setManual([]);
+    setAbsentIds([]);
   };
 
   const resetAll = () => {
@@ -105,6 +111,7 @@ export default function App() {
     clearState();
     setState({ players: [], rounds: [] });
     setManual([]);
+    setAbsentIds([]);
   };
 
   const loadDemo = () => {
@@ -126,10 +133,11 @@ export default function App() {
     setState({
       players,
       rounds: [
-        { id: uid('r'), matches: [win(a.id, d.id), win(b.id, e.id), win(c.id, f.id)] },
+        { id: uid('r'), matches: [win(a.id, d.id), win(b.id, e.id), win(c.id, f.id)], absentIds: [] },
       ],
     });
     setManual([]);
+    setAbsentIds([]);
   };
 
   return (
@@ -138,7 +146,7 @@ export default function App() {
         <div>
           <h1>桌游联赛 · 瑞士制配对</h1>
           <p className="subtitle">
-            最多 32 人 · 禁止重复交手 · 依次最小化同队对局数、跨积分组对局数与总积分差 · 奇数人自动轮空
+            最多 32 人 · 禁止重复交手 · 依次最小化同队对局数、跨积分组对局数与总积分差 · 奇数人自动轮空 · 支持本轮缺席
           </p>
         </div>
         <div className="top-actions">
@@ -171,6 +179,8 @@ export default function App() {
             players={state.players}
             rounds={state.rounds}
             manual={manual}
+            absentIds={absentIds}
+            onAbsentChange={setAbsentIds}
             onManualChange={setManual}
             onCommit={commitPlan}
           />

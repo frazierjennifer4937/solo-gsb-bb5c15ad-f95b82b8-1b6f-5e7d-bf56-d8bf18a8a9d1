@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { DraftPair, Player, Round } from './types';
 import {
   computeStandings,
@@ -14,21 +14,33 @@ interface Props {
   players: Player[];
   rounds: Round[];
   manual: DraftPair[];
+  absentIds: string[];
+  onAbsentChange: (ids: string[]) => void;
   onManualChange: (rows: DraftPair[]) => void;
   onCommit: (plan: PairingPlan) => void;
 }
 
-export function NextRoundPanel({ players, rounds, manual, onManualChange, onCommit }: Props) {
+export function NextRoundPanel({
+  players,
+  rounds,
+  manual,
+  absentIds,
+  onAbsentChange,
+  onManualChange,
+  onCommit,
+}: Props) {
   const roundNo = rounds.length + 1;
   const standings = useMemo(() => computeStandings(players, rounds), [players, rounds]);
   const standingById = useMemo(() => new Map(standings.map((s) => [s.player.id, s])), [standings]);
+  const absentSet = useMemo(() => new Set(absentIds), [absentIds]);
+  const [absentOpen, setAbsentOpen] = useState(absentIds.length > 0);
 
   // 未填写完整的锁定行不参与引擎，单独提示
   const incomplete = manual.filter((r) => r.locked && (!r.aId || !r.bId));
   const completeManual = useMemo(() => manual.filter((r) => r.locked && r.aId && r.bId), [manual]);
   const plan = useMemo(
-    () => generatePairing({ players, rounds, manual: completeManual }),
-    [players, rounds, completeManual],
+    () => generatePairing({ players, rounds, manual: completeManual, absentIds }),
+    [players, rounds, completeManual, absentIds],
   );
 
   const lastRound = rounds[rounds.length - 1];
@@ -42,6 +54,13 @@ export function NextRoundPanel({ players, rounds, manual, onManualChange, onComm
   const removeRow = (id: string) => onManualChange(manual.filter((r) => r.id !== id));
   const addRow = () =>
     onManualChange([...manual, { id: uid('lock'), aId: '', bId: '', locked: true }]);
+
+  /** 勾选/取消勾选本轮缺席；缺席者不参与配对、轮空与锁定，但不删除选手、不影响积分 */
+  const toggleAbsent = (id: string) => {
+    onAbsentChange(
+      absentSet.has(id) ? absentIds.filter((x) => x !== id) : [...absentIds, id],
+    );
+  };
 
   /** 锁定引擎给出的一条自由对局 */
   const lockPlanPair = (p: PlanPair) => {
@@ -57,6 +76,10 @@ export function NextRoundPanel({ players, rounds, manual, onManualChange, onComm
     if (r.bId) usedIds.add(r.bId);
   }
   if (plan.byeId) usedIds.add(plan.byeId);
+  // 缺席选手不可被人工锁定选择
+  for (const id of absentIds) usedIds.add(id);
+
+  const attendeeCount = players.length - absentIds.filter((id) => standingById.has(id)).length;
 
   return (
     <section className="card highlight">
@@ -86,10 +109,53 @@ export function NextRoundPanel({ players, rounds, manual, onManualChange, onComm
               <button
                 className="btn success"
                 onClick={() => onCommit(plan)}
-                title="将当前方案（含轮空）写入新一轮"
+                title="将当前方案（含轮空与本轮缺席名单）写入新一轮"
               >
                 ✓ 确认方案，进入第 {roundNo} 轮
               </button>
+            )}
+          </div>
+
+          {/* 本轮缺席勾选 */}
+          <div className="absent-box">
+            <div className="absent-head">
+              <h3>本轮缺席</h3>
+              <span className="muted">
+                出席 {attendeeCount} 人 / 缺席 {absentIds.length} 人
+              </span>
+              <button className="btn tiny ghost" onClick={() => setAbsentOpen((v) => !v)}>
+                {absentOpen ? '收起' : '勾选缺席选手'}
+              </button>
+            </div>
+            {absentOpen && (
+              <>
+                <ul className="absent-list">
+                  {standings.map((s) => {
+                    const off = absentSet.has(s.player.id);
+                    return (
+                      <li key={s.player.id}>
+                        <label className={`absent-item ${off ? 'off' : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={off}
+                            onChange={() => toggleAbsent(s.player.id)}
+                          />
+                          <span className="absent-name">{s.player.name}</span>
+                          <em>{points2Label(s.points2)} 分</em>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="hint">
+                  勾选后该选手本轮不参赛：不参与配对、轮空候选与人工锁定；选手保留在名单中，历史积分不受影响。确认轮次时缺席名单将随本轮保存。
+                </p>
+              </>
+            )}
+            {!absentOpen && absentIds.length > 0 && (
+              <p className="hint warn">
+                本轮缺席：{absentIds.map((id) => standingById.get(id)?.player.name ?? id).join('、')}
+              </p>
             )}
           </div>
 
@@ -103,6 +169,7 @@ export function NextRoundPanel({ players, rounds, manual, onManualChange, onComm
                   row={row}
                   players={players}
                   usedIds={usedIds}
+                  absentSet={absentSet}
                   standingById={standingById}
                   onChange={(patch) => updateRow(row.id, patch)}
                   onRemove={() => removeRow(row.id)}
@@ -133,6 +200,12 @@ export function NextRoundPanel({ players, rounds, manual, onManualChange, onComm
                 <span className="stat">
                   对局数 <b>{plan.pairs.length}</b>
                 </span>
+                {absentIds.length > 0 && (
+                  <span className="stat">
+                    出席 <b>{attendeeCount}</b>
+                    <span className="muted">（缺席 {absentIds.length}）</span>
+                  </span>
+                )}
                 <span className="stat">
                   同队对局{' '}
                   <b className={plan.teamConflictCount > 0 ? 'danger-text' : ''}>
@@ -249,6 +322,7 @@ function ManualRow({
   row,
   players,
   usedIds,
+  absentSet,
   standingById,
   onChange,
   onRemove,
@@ -256,6 +330,7 @@ function ManualRow({
   row: DraftPair;
   players: Player[];
   usedIds: Set<string>;
+  absentSet: Set<string>;
   standingById: Map<string, Standing>;
   onChange: (patch: Partial<DraftPair>) => void;
   onRemove: () => void;
@@ -268,13 +343,20 @@ function ManualRow({
     return a.name.localeCompare(b.name, 'zh-Hans-CN');
   });
 
+  // 缺席选手不可新选；若行内已选中的选手被标记缺席，仍保留显示以便用户处理冲突
   const optionsFor = (self: string, other: string | null) =>
-    sorted.filter((p) => p.id === self || (other !== null && p.id === other) || !usedIds.has(p.id));
+    sorted.filter(
+      (p) =>
+        p.id === self ||
+        (other !== null && p.id === other) ||
+        (!usedIds.has(p.id) && !absentSet.has(p.id)),
+    );
 
   const warn = !row.aId || !row.bId;
+  const absentHit = absentSet.has(row.aId) || (row.bId !== null && absentSet.has(row.bId));
 
   return (
-    <div className={`manual-row ${warn ? 'incomplete' : ''}`}>
+    <div className={`manual-row ${warn || absentHit ? 'incomplete' : ''}`}>
       <span className="tag lock">🔒</span>
       <select value={row.aId} onChange={(e) => onChange({ aId: e.target.value })}>
         <option value="">选择选手 A…</option>
@@ -282,6 +364,7 @@ function ManualRow({
           <option key={p.id} value={p.id}>
             {standingById.get(p.id)?.player.name ?? p.name}
             {p.team?.trim() ? `（${p.team.trim()}）` : ''}
+            {absentSet.has(p.id) ? '（本轮缺席）' : ''}
           </option>
         ))}
       </select>
@@ -292,9 +375,11 @@ function ManualRow({
           <option key={p.id} value={p.id}>
             {standingById.get(p.id)?.player.name ?? p.name}
             {p.team?.trim() ? `（${p.team.trim()}）` : ''}
+            {absentSet.has(p.id) ? '（本轮缺席）' : ''}
           </option>
         ))}
       </select>
+      {absentHit && <span className="tag warn">含缺席选手</span>}
       <button className="btn tiny danger" onClick={onRemove}>
         移除
       </button>

@@ -154,12 +154,15 @@ export interface GenerateOptions {
   rounds: Round[];
   /** 人工指定（锁定）的对局，含未填写完整的行（bId 可能为 null） */
   manual: DraftPair[];
+  /** 本轮缺席的选手 id：不参与配对、轮空候选与锁定校验；不删除选手，积分与历史保持不变 */
+  absentIds?: string[];
 }
 
 const NODE_BUDGET = 300_000;
 
 export function generatePairing(opts: GenerateOptions): PairingPlan {
   const { players, rounds, manual } = opts;
+  const absent = new Set(opts.absentIds ?? []);
   const empty: PairingPlan = {
     ok: false,
     pairs: [],
@@ -171,12 +174,20 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
     warnings: [],
     optimal: false,
   };
-  if (players.length < 2) {
-    return { ...empty, conflicts: [{ message: '至少需要 2 名选手才能开始配对。' }] };
+  const attendees = players.filter((p) => !absent.has(p.id));
+  if (attendees.length < 2) {
+    const message =
+      absent.size > 0
+        ? `本轮出席选手不足 2 人（出席 ${attendees.length} 人 / 缺席 ${absent.size} 人），无法生成对阵，请调整缺席名单。`
+        : '至少需要 2 名选手才能开始配对。';
+    return { ...empty, conflicts: [{ message }] };
   }
 
+  // 积分始终按全体选手与全部历史轮次计算：缺席者不参赛但积分与排名数据不变
   const standings = computeStandings(players, rounds);
   const standingById = new Map(standings.map((s) => [s.player.id, s]));
+  // 本轮实际参赛（出席）的选手：配对、轮空候选与锁定均只从其中产生
+  const present = standings.filter((s) => !absent.has(s.player.id));
   const played = buildPlayedMap(rounds);
   const warnings: string[] = [];
 
@@ -197,6 +208,18 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
     }
     if (!standingById.has(row.aId) || !standingById.has(row.bId)) {
       conflicts.push({ pairId: row.id, message: '锁定对局引用了已不存在的选手，请重新选择。' });
+      continue;
+    }
+    const absentSides = [row.aId, row.bId].filter((id) => absent.has(id));
+    if (absentSides.length > 0) {
+      const names = absentSides
+        .map((id) => standingById.get(id)?.player.name ?? id)
+        .join('、');
+      conflicts.push({
+        pairId: row.id,
+        playerId: absentSides[0],
+        message: `锁定对局包含本轮缺席选手（${names}）：请取消其缺席标记，或移除该锁定对局。`,
+      });
       continue;
     }
     for (const pid of [row.aId, row.bId]) {
@@ -242,9 +265,9 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
   }
 
   let byeId: string | null = null;
-  const oddTotal = players.length % 2 === 1;
+  const oddTotal = attendees.length % 2 === 1;
   if (oddTotal) {
-    const candidates = standings.filter((s) => !lockedIds.has(s.player.id));
+    const candidates = present.filter((s) => !lockedIds.has(s.player.id));
     const noBye = candidates.filter((s) => !s.hadBye);
     let chosen: Standing | undefined;
     if (noBye.length > 0) {
@@ -252,15 +275,15 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
     } else {
       chosen = [...candidates].sort(compareByePriority)[0];
       warnings.push(
-        `所有选手都已轮空过一次，本轮只能让积分最低的「${chosen?.player.name ?? ''}」再次轮空。`,
+        `所有出席选手都已轮空过一次，本轮只能让积分最低的「${chosen?.player.name ?? ''}」再次轮空。`,
       );
     }
     if (!chosen) {
-      conflicts.push({ message: '人数为奇数，但所有选手都被锁定对局占用，无人可以安排轮空。' });
+      conflicts.push({ message: '出席人数为奇数，但所有出席选手都被锁定对局占用，无人可以安排轮空。' });
       return { ...empty, conflicts, warnings };
     }
     // 若没有锁定，本应轮空的选手（全局：未轮空且积分最低）因被锁定而无法轮空
-    const globalPool = noBye.length > 0 ? standings.filter((s) => !s.hadBye) : standings;
+    const globalPool = noBye.length > 0 ? present.filter((s) => !s.hadBye) : present;
     const globalChoice = [...globalPool].sort(compareByePriority)[0];
     if (globalChoice && globalChoice.player.id !== chosen.player.id && lockedIds.has(globalChoice.player.id)) {
       warnings.push(
@@ -272,7 +295,7 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
   }
 
   // ---- 3. 自由选手与合法性矩阵 ----
-  const free = standings.filter((s) => s.player.id !== byeId && !lockedIds.has(s.player.id));
+  const free = present.filter((s) => s.player.id !== byeId && !lockedIds.has(s.player.id));
   if (free.length % 2 !== 0) {
     conflicts.push({ message: '内部错误：扣除轮空与锁定选手后剩余人数为奇数，无法两两配对。' });
     return { ...empty, conflicts, warnings };

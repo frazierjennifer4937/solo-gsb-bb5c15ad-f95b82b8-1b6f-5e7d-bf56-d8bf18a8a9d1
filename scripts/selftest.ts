@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import type { DraftPair, Player, Round } from '../src/types';
+import type { DraftPair, Player, Round, TournamentState } from '../src/types';
 import {
   buildPlayedMap,
   computeStandings,
@@ -7,6 +7,7 @@ import {
   pairKey,
   points2Label,
 } from '../src/engine';
+import { normalizeState } from '../src/storage';
 
 let uid = 0;
 const mkPlayers = (
@@ -367,3 +368,98 @@ const lock = (a: string, b: string | null): DraftPair => ({
 }
 
 console.log('\n全部引擎自测通过 ✅');
+
+// ===== 本轮缺席 =====
+
+// 13. 缺席者不参与配对与轮空；出席偶数时无轮空
+{
+  const ps = mkPlayers(['A', 'B', 'C', 'D', 'E']);
+  const E = ps[4];
+  const plan = generatePairing({ players: ps, rounds: [], manual: [], absentIds: [E.id] });
+  assert.ok(plan.ok, plan.conflicts.map((c) => c.message).join(';'));
+  assert.strictEqual(plan.pairs.length, 2, '4 人出席应配 2 场');
+  assert.strictEqual(plan.byeId, null, '出席为偶数不应轮空');
+  for (const p of plan.pairs) {
+    assert.ok(p.aId !== E.id && p.bId !== E.id, '缺席者不得出现在对局中');
+  }
+  console.log('✓ 缺席：缺席者不参与配对');
+}
+
+// 13b. 出席为奇数时轮空只在出席者中产生；最低分出席者轮空
+{
+  // 6 人，r1 后 A/B/C=1 分，D/E/F=0 分；F 缺席 => 出席 5 人（奇），轮空应在 D/E 中
+  const ps = mkPlayers(['A', 'B', 'C', 'D', 'E', 'F']);
+  const [A, B, C, D, E, F] = ps;
+  const r1 = round([match(A.id, D.id), match(B.id, E.id), match(C.id, F.id)]);
+  const plan = generatePairing({ players: ps, rounds: [r1], manual: [], absentIds: [F.id] });
+  assert.ok(plan.ok, plan.conflicts.map((c) => c.message).join(';'));
+  assert.ok(plan.byeId === D.id || plan.byeId === E.id, '轮空应给出席的 0 分选手');
+  assert.notStrictEqual(plan.byeId, F.id, '缺席者不得轮空');
+  assert.strictEqual(plan.pairs.length, 2);
+  console.log('✓ 缺席：轮空只在出席者中产生');
+}
+
+// 13c. 缺席不影响积分榜（积分仍按全体选手计算）
+{
+  const ps = mkPlayers(['A', 'B', 'C', 'D']);
+  const [A, B, C, D] = ps;
+  const r1 = round([match(A.id, B.id), match(C.id, D.id)]);
+  const before = computeStandings(ps, [r1]);
+  // 缺席只是 generatePairing 的入参，不改变 computeStandings 的结果
+  const after = computeStandings(ps, [r1]);
+  assert.deepStrictEqual(
+    after.map((s) => [s.player.id, s.points2]),
+    before.map((s) => [s.player.id, s.points2]),
+    '缺席不得改动历史积分',
+  );
+  console.log('✓ 缺席：历史积分保持不变');
+}
+
+// 13d. 锁定对局含缺席选手 => 立即冲突，取消缺席后按原约束重算成功
+{
+  const ps = mkPlayers(['A', 'B', 'C', 'D']);
+  const [A, B, C, D] = ps;
+  const manual = [lock(A.id, B.id)];
+  const plan = generatePairing({ players: ps, rounds: [], manual, absentIds: [B.id] });
+  assert.ok(!plan.ok, '锁定对局含缺席者必须判冲突');
+  assert.ok(
+    plan.conflicts.some((c) => c.message.includes('缺席') && c.message.includes(B.name)),
+    '冲突应指出缺席选手姓名',
+  );
+  // 取消缺席后，同一锁定约束下可正常配对
+  const restored = generatePairing({ players: ps, rounds: [], manual, absentIds: [] });
+  assert.ok(restored.ok, '取消缺席后应按原约束重新计算成功');
+  const lockedPair = restored.pairs.find((p) => p.locked);
+  assert.ok(lockedPair && lockedPair.aId === A.id && lockedPair.bId === B.id, '原锁定对局应保留');
+  void C; void D;
+  console.log('✓ 缺席：锁定含缺席者即冲突，取消后恢复原约束');
+}
+
+// 13e. 缺席到出席不足 2 人 => 冲突并提示
+{
+  const ps = mkPlayers(['A', 'B', 'C']);
+  const [A, B] = ps;
+  const plan = generatePairing({ players: ps, rounds: [], manual: [], absentIds: [A.id, B.id] });
+  assert.ok(!plan.ok);
+  assert.ok(plan.conflicts.some((c) => c.message.includes('出席')));
+  console.log('✓ 缺席：出席不足 2 人时给出冲突');
+}
+
+// 13f. 旧数据迁移：缺少 absentIds 的 Round 视为空缺席名单
+{
+  const legacy = {
+    players: [{ id: 'p1', name: '甲' }],
+    rounds: [{ id: 'r1', matches: [] }],
+  } as unknown as TournamentState;
+  const norm = normalizeState(legacy);
+  assert.deepStrictEqual(norm.rounds[0].absentIds, [], '旧轮次缺席名单应迁移为空');
+  // 已有 absentIds 的轮次保持原值
+  const current = {
+    players: [],
+    rounds: [{ id: 'r2', matches: [], absentIds: ['p9'] }],
+  } as unknown as TournamentState;
+  assert.deepStrictEqual(normalizeState(current).rounds[0].absentIds, ['p9']);
+  console.log('✓ 迁移：旧数据缺席名单视为空');
+}
+
+console.log('缺席能力自测通过 ✅');

@@ -21,6 +21,7 @@ export function RoundsPanel({ rounds, standingById, onSetResult, onDeleteRound }
           const missing = round.matches.some(
             (m) => !m.bye && m.playerBId !== null && m.resultA === null,
           );
+          const absentIds = round.absentIds ?? [];
           return (
             <div key={round.id} className={`round ${missing ? 'missing' : ''}`}>
               <div className="round-head">
@@ -43,6 +44,14 @@ export function RoundsPanel({ rounds, standingById, onSetResult, onDeleteRound }
                   删除本轮
                 </button>
               </div>
+              {absentIds.length > 0 && (
+                <p className="absent-note">
+                  本轮缺席：
+                  {absentIds
+                    .map((id) => standingById.get(id)?.player.name ?? '（已删除选手）')
+                    .join('、')}
+                </p>
+              )}
               <ul className="match-list">
                 {round.matches.map((m) => (
                   <MatchRow
