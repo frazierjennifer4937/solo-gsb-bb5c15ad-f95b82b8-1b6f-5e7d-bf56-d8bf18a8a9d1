@@ -679,6 +679,97 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* ===== 本轮缺席 ===== */
+
+.absent-picker {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+}
+
+.absent-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.absent-picker-head h3 {
+  font-size: 13px;
+}
+
+.absent-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.absent-list li label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 12px 3px 9px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.absent-list li.absent label {
+  border-color: rgba(224, 82, 96, 0.55);
+  background: rgba(224, 82, 96, 0.1);
+}
+
+.absent-list li.absent .absent-name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.absent-list input[type='checkbox'] {
+  accent-color: var(--primary);
+  margin: 0;
+}
+
+.absent-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(224, 82, 96, 0.55);
+  border-radius: 8px;
+  background: rgba(224, 82, 96, 0.07);
+  font-size: 13px;
+  color: #ff9aa3;
+}
+
+.absent-box .absent-names {
+  color: var(--text);
+  margin-left: 4px;
+}
+
+.round-absent {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(224, 82, 96, 0.08);
+  font-size: 12.5px;
+}
+
+.manual-row select.absent-select {
+  border-color: var(--danger);
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;

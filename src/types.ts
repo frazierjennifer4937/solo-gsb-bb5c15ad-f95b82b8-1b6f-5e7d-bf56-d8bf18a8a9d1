@@ -23,6 +23,8 @@ export interface Match {
 export interface Round {
   id: string;
   matches: Match[];
+  /** 该轮确认时快照的缺席选手 id 名单；缺席者不参赛但保留选手资料与历史积分。旧数据升级时为空数组（全员出席） */
+  absentIds?: string[];
 }
 
 /** 工作区中尚未确认的一条对阵（锁定行来自人工指定） */

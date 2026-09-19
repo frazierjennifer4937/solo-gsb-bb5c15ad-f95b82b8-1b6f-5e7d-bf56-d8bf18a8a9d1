@@ -1,15 +1,21 @@
-import type { Match, Round } from './types';
+import type { Match, Player, Round } from './types';
 import type { Standing } from './engine';
 
 interface Props {
   rounds: Round[];
+  players: Player[];
   standingById: Map<string, Standing>;
   onSetResult: (roundId: string, matchId: string, resultA: Match['resultA']) => void;
   onDeleteRound: (roundId: string) => void;
 }
 
-export function RoundsPanel({ rounds, standingById, onSetResult, onDeleteRound }: Props) {
+export function RoundsPanel({ rounds, players, standingById, onSetResult, onDeleteRound }: Props) {
   if (rounds.length === 0) return null;
+
+  const playerName = (id: string) =>
+    players.find((p) => p.id === id)?.name ??
+    standingById.get(id)?.player.name ??
+    '（已删除选手）';
 
   return (
     <section className="card">
@@ -21,6 +27,7 @@ export function RoundsPanel({ rounds, standingById, onSetResult, onDeleteRound }
           const missing = round.matches.some(
             (m) => !m.bye && m.playerBId !== null && m.resultA === null,
           );
+          const absentIds = round.absentIds ?? [];
           return (
             <div key={round.id} className={`round ${missing ? 'missing' : ''}`}>
               <div className="round-head">
@@ -43,6 +50,12 @@ export function RoundsPanel({ rounds, standingById, onSetResult, onDeleteRound }
                   删除本轮
                 </button>
               </div>
+              {absentIds.length > 0 && (
+                <div className="round-absent" title="该轮确认时快照的缺席名单">
+                  <span className="tag">本轮缺席 {absentIds.length} 人</span>
+                  <span className="muted">{absentIds.map(playerName).join('、')}</span>
+                </div>
+              )}
               <ul className="match-list">
                 {round.matches.map((m) => (
                   <MatchRow

@@ -366,4 +366,85 @@ const lock = (a: string, b: string | null): DraftPair => ({
   console.log(`✓ 32 人 6 轮历史后配对：${ms}ms，跨组 ${plan.crossCount} 场`);
 }
 
+// 13. 本轮缺席：缺席者不参与配对与轮空，5 人标记 1 人缺席后按 4 人配对、无轮空
+{
+  const ps = mkPlayers(['A', 'B', 'C', 'D', 'E']);
+  const [A, B, C, D, E] = ps;
+  void E;
+  const plan = generatePairing({
+    players: ps,
+    rounds: [],
+    manual: [],
+    absentIds: [E.id],
+  });
+  assert.ok(plan.ok, plan.conflicts.map((c) => c.message).join(';'));
+  assert.strictEqual(plan.pairs.length, 2, '4 名出席者应配 2 场');
+  assert.strictEqual(plan.byeId, null, '出席人数为偶数不应轮空');
+  for (const p of plan.pairs) {
+    assert.notStrictEqual(p.aId, E.id);
+    assert.notStrictEqual(p.bId, E.id);
+  }
+  void A; void B; void C; void D;
+  console.log('✓ 本轮缺席：缺席者不参与配对，且不产生轮空');
+}
+
+// 14. 奇数人缺席 1 人 => 偶数；偶数人缺席 1 人 => 奇数，轮空只在出席者中产生
+{
+  const ps = mkPlayers(['A', 'B', 'C', 'D', 'E', 'F']);
+  const [A, B, C, D, E, F] = ps;
+  void A; void B; void C; void D;
+  const plan = generatePairing({ players: ps, rounds: [], manual: [], absentIds: [F.id] });
+  assert.ok(plan.ok);
+  assert.strictEqual(plan.pairs.length, 2, '5 名出席者配 2 场');
+  assert.ok(plan.byeId && plan.byeId !== F.id, '轮空者必须是出席者');
+  void E;
+  console.log('✓ 本轮缺席：轮空候选只使用出席者');
+}
+
+// 15. 已锁定对局一方被标记缺席 => 立即阻止确认并指出冲突方
+{
+  const ps = mkPlayers(['A', 'B', 'C', 'D']);
+  const [A, B, C, D] = ps;
+  const plan = generatePairing({
+    players: ps,
+    rounds: [],
+    manual: [lock(A.id, B.id)],
+    absentIds: [A.id],
+  });
+  assert.ok(!plan.ok, '锁定对局一方缺席时必须不可确认');
+  assert.ok(
+    plan.conflicts.some((c) => c.message.includes('本轮缺席') && c.message.includes(A.name)),
+    '冲突原因应点名缺席选手',
+  );
+  void C; void D;
+  console.log('✓ 本轮缺席：锁定对局一方缺席即阻止确认');
+}
+
+// 16. 取消缺席后按原约束重新计算：相同锁定下取消缺席即可正常配对
+{
+  const ps = mkPlayers(['A', 'B', 'C', 'D']);
+  const [A, B] = ps;
+  const base = { players: ps, rounds: [], manual: [lock(A.id, B.id)] };
+  const blockedPlan = generatePairing({ ...base, absentIds: [A.id] });
+  assert.ok(!blockedPlan.ok);
+  const restored = generatePairing({ ...base, absentIds: [] });
+  assert.ok(restored.ok, '取消缺席后锁定对局恢复合法');
+  const locked = restored.pairs.find((p) => p.locked);
+  assert.ok(locked && locked.aId === A.id && locked.bId === B.id);
+  console.log('✓ 本轮缺席：取消缺席后按原约束重新计算');
+}
+
+// 17. 出席者不足 2 人时阻止配对（缺席不等于删除，选手仍在积分榜）
+{
+  const ps = mkPlayers(['A', 'B', 'C']);
+  const [A, B, C] = ps;
+  const plan = generatePairing({ players: ps, rounds: [], manual: [], absentIds: [B.id, C.id] });
+  assert.ok(!plan.ok);
+  assert.ok(plan.conflicts.some((c) => c.message.includes('出席')));
+  const standings = computeStandings(ps, []);
+  assert.strictEqual(standings.length, 3, '缺席不删除选手，积分榜仍为全员');
+  void A;
+  console.log('✓ 本轮缺席：出席不足时阻止，选手仍保留');
+}
+
 console.log('\n全部引擎自测通过 ✅');

@@ -154,12 +154,15 @@ export interface GenerateOptions {
   rounds: Round[];
   /** 人工指定（锁定）的对局，含未填写完整的行（bId 可能为 null） */
   manual: DraftPair[];
+  /** 本轮缺席选手 id：不参与配对、轮空候选与人工锁定，不删除选手也不改动历史积分 */
+  absentIds?: string[];
 }
 
 const NODE_BUDGET = 300_000;
 
 export function generatePairing(opts: GenerateOptions): PairingPlan {
   const { players, rounds, manual } = opts;
+  const absentIds = opts.absentIds ?? [];
   const empty: PairingPlan = {
     ok: false,
     pairs: [],
@@ -171,11 +174,21 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
     warnings: [],
     optimal: false,
   };
-  if (players.length < 2) {
-    return { ...empty, conflicts: [{ message: '至少需要 2 名选手才能开始配对。' }] };
+
+  // 缺席名单是确认时的快照：只在本轮规划中过滤出席者，不删除选手、不改动历史积分。
+  // 积分/对手分仍按全部选手计算（保证缺席者历史积分与 Buchholz 参照不变），再滤出本轮出席者。
+  const absentSet = new Set(absentIds);
+  const playerById = new Map(players.map((p) => [p.id, p]));
+  const activePlayers = players.filter((p) => !absentSet.has(p.id));
+  if (activePlayers.length < 2) {
+    return {
+      ...empty,
+      conflicts: [{ message: '本轮至少需要 2 名选手出席才能开始配对（可调整缺席名单）。' }],
+    };
   }
 
-  const standings = computeStandings(players, rounds);
+  const allStandings = computeStandings(players, rounds);
+  const standings = allStandings.filter((s) => !absentSet.has(s.player.id));
   const standingById = new Map(standings.map((s) => [s.player.id, s]));
   const played = buildPlayedMap(rounds);
   const warnings: string[] = [];
@@ -196,7 +209,23 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
       continue;
     }
     if (!standingById.has(row.aId) || !standingById.has(row.bId)) {
-      conflicts.push({ pairId: row.id, message: '锁定对局引用了已不存在的选手，请重新选择。' });
+      const existsA = !!playerById.get(row.aId);
+      const existsB = !!playerById.get(row.bId);
+      if (!existsA || !existsB) {
+        conflicts.push({ pairId: row.id, message: '锁定对局引用了已不存在的选手，请重新选择。' });
+      } else {
+        // 双方选手都还在，但至少一方本轮缺席：直接阻止确认并指出冲突方
+        const na = playerById.get(row.aId)!;
+        const nb = playerById.get(row.bId)!;
+        const aAbsent = absentSet.has(row.aId);
+        const absentName = (aAbsent ? na : nb).name;
+        const otherName = (aAbsent ? nb : na).name;
+        conflicts.push({
+          pairId: row.id,
+          playerId: aAbsent ? row.aId : row.bId,
+          message: `锁定对局 ${na.name} vs ${nb.name} 的一方「${absentName}」已被标记为本轮缺席，无法确认：请取消其缺席，或移除与「${otherName}」的该条锁定。`,
+        });
+      }
       continue;
     }
     for (const pid of [row.aId, row.bId]) {
@@ -242,7 +271,8 @@ export function generatePairing(opts: GenerateOptions): PairingPlan {
   }
 
   let byeId: string | null = null;
-  const oddTotal = players.length % 2 === 1;
+  // 出席人数决定本轮是否需要轮空
+  const oddTotal = standings.length % 2 === 1;
   if (oddTotal) {
     const candidates = standings.filter((s) => !lockedIds.has(s.player.id));
     const noBye = candidates.filter((s) => !s.hadBye);

@@ -15,6 +15,8 @@ export default function App() {
     loadState() ?? { players: [], rounds: [] },
   );
   const [manual, setManual] = useState<DraftPair[]>([]);
+  /** 下一轮工作区中勾选的本轮缺席选手 id（工作区草稿；确认时快照进 Round） */
+  const [absentIds, setAbsentIds] = useState<string[]>([]);
 
   useEffect(() => {
     saveState(state);
@@ -74,6 +76,7 @@ export default function App() {
       return { ...s, rounds: s.rounds.slice(0, idx) };
     });
     setManual([]);
+    setAbsentIds([]);
   };
 
   const commitPlan = (plan: PairingPlan) => {
@@ -93,11 +96,15 @@ export default function App() {
         bye: true,
       });
     }
+    // 只快照当前仍存在的缺席选手 id，随 Round 持久化；刷新后历史区名单保持一致
+    const playerIds = new Set(state.players.map((p) => p.id));
+    const absentSnapshot = absentIds.filter((id) => playerIds.has(id));
     setState((s) => ({
       ...s,
-      rounds: [...s.rounds, { id: uid('r'), matches }],
+      rounds: [...s.rounds, { id: uid('r'), matches, absentIds: absentSnapshot }],
     }));
     setManual([]);
+    setAbsentIds([]);
   };
 
   const resetAll = () => {
@@ -105,6 +112,7 @@ export default function App() {
     clearState();
     setState({ players: [], rounds: [] });
     setManual([]);
+    setAbsentIds([]);
   };
 
   const loadDemo = () => {
@@ -130,6 +138,7 @@ export default function App() {
       ],
     });
     setManual([]);
+    setAbsentIds([]);
   };
 
   return (
@@ -138,7 +147,7 @@ export default function App() {
         <div>
           <h1>桌游联赛 · 瑞士制配对</h1>
           <p className="subtitle">
-            最多 32 人 · 禁止重复交手 · 依次最小化同队对局数、跨积分组对局数与总积分差 · 奇数人自动轮空
+            最多 32 人 · 禁止重复交手 · 依次最小化同队对局数、跨积分组对局数与总积分差 · 奇数人自动轮空 · 支持本轮缺席
           </p>
         </div>
         <div className="top-actions">
@@ -172,10 +181,13 @@ export default function App() {
             rounds={state.rounds}
             manual={manual}
             onManualChange={setManual}
+            absentIds={absentIds}
+            onAbsentChange={setAbsentIds}
             onCommit={commitPlan}
           />
           <RoundsPanel
             rounds={state.rounds}
+            players={state.players}
             standingById={standingById}
             onSetResult={setResult}
             onDeleteRound={deleteRound}
